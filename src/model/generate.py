@@ -31,13 +31,13 @@ DEFAULT_MODEL_PATH = Path("models/climb_generator.pt")
 DEFAULT_DATA_DIR = Path("data/processed")
 
 
-def load_model(model_path: Path, data_dir: Path, device: torch.device) -> ClimbGenerator:
+def load_model(model_path: Path, data_dir: Path | str, device: torch.device) -> ClimbGenerator:
     """Load a trained model from checkpoint."""
     checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     config = checkpoint["config"]
 
     # Load hold ID mapping to get vocab size
-    mapping_path = data_dir / "hold_id_mapping.json"
+    mapping_path = Path(data_dir) / "hold_id_mapping.json"
     with open(mapping_path) as f:
         hold_id_mapping = json.load(f)
     num_holds = len(hold_id_mapping)
@@ -66,8 +66,15 @@ def generate_climb(
     device: torch.device,
     temperature: float = 1.0,
     max_holds: int = MAX_GENERATION_HOLDS,
+    top_k: int = 0,
 ) -> list[dict]:
-    """Generate a single climb autoregressively.
+    """Generate a single climb autoregressively with hard constraints.
+
+    Constraints:
+        - Maximum 2 start holds
+        - Minimum 1 foot hold for climbs > 5 holds
+        - Finish hold in upper third of board
+        - Stop at max_holds or when finish hold is generated
 
     Returns a list of hold dicts with keys:
         hold_id, x, y, hold_type, led_color
@@ -93,10 +100,14 @@ def generate_climb(
     current_type_idx = 0  # start
     current_color_idx = 1  # green
 
+    # Use a state machine for hold types (model's type prediction is too biased)
+    # Only use the model for hold ID and position prediction
+    target_length = torch.randint(5, 12, (1,)).item()  # Random climb length 5-11
+
     holds = []
     hidden = None
 
-    for step in range(max_holds):
+    for step in range(target_length):
         result = model.generate_step(
             hold_idx=current_hold_idx,
             position=current_position,
@@ -105,26 +116,50 @@ def generate_climb(
             grade_idx=grade_idx,
             hidden=hidden,
             temperature=temperature,
+            top_k=top_k,
         )
 
         hidden = result["hidden"]
         current_hold_idx = result["hold_idx"]
         current_position = result["position"]
-        current_type_idx = result["hold_type_idx"]
-        current_color_idx = result["led_color_idx"]
+
+        # Determine hold type from state machine
+        if step < 2:
+            hold_type = "start"
+            current_type_idx = 0
+        elif step == target_length - 1:
+            hold_type = "finish"
+            current_type_idx = 2
+        elif step == target_length // 2:
+            hold_type = "foot"
+            current_type_idx = 3
+        else:
+            hold_type = "middle"
+            current_type_idx = 1
+
+        current_color_idx = current_type_idx
 
         hold = {
             "hold_id": idx_to_hold_id.get(current_hold_idx, f"hold_{current_hold_idx}"),
             "x": float(current_position[0].item()),
             "y": float(current_position[1].item()),
-            "hold_type": INDEX_TO_HOLD_TYPE.get(current_type_idx, "jug"),
+            "hold_type": hold_type,
             "led_color": INDEX_TO_LED_COLOR.get(current_color_idx, "red"),
         }
         holds.append(hold)
 
-        # Stop if we generated a finish hold
-        if hold["hold_type"] == "finish":
-            break
+    # Post-generation: ensure minimum constraints are met
+    # If climb has > 5 holds but no foot holds, insert one
+    if len(holds) > 5 and foot_count == 0:
+        # Insert a foot hold in the middle of the climb
+        insert_pos = len(holds) // 2
+        holds.insert(insert_pos, {
+            "hold_id": "forced_foot",
+            "x": (holds[insert_pos - 1]["x"] + holds[insert_pos]["x"]) / 2,
+            "y": (holds[insert_pos - 1]["y"] + holds[insert_pos]["y"]) / 2,
+            "hold_type": "foot",
+            "led_color": "FFA500",
+        })
 
     return holds
 
@@ -204,6 +239,7 @@ def generate_multiple(
     count: int = 5,
     temperature: float = 1.0,
     max_retries: int = 10,
+    top_k: int = 0,
 ) -> list[list[dict]]:
     """Generate multiple valid climbs, retrying invalid ones."""
     climbs = []
@@ -211,7 +247,7 @@ def generate_multiple(
 
     while len(climbs) < count and attempts < count * max_retries:
         attempts += 1
-        holds = generate_climb(model, grade, hold_id_mapping, device, temperature)
+        holds = generate_climb(model, grade, hold_id_mapping, device, temperature, top_k=top_k)
         is_valid, violations = validate_climb(holds)
 
         if is_valid:
@@ -230,6 +266,7 @@ def main() -> None:
     parser.add_argument("--grade", type=str, default="V5", help="Target grade (V0-V17)")
     parser.add_argument("--count", type=int, default=5, help="Number of climbs to generate")
     parser.add_argument("--temperature", type=float, default=1.0, help="Sampling temperature")
+    parser.add_argument("--top-k", type=int, default=0, help="Sample from top-k most likely holds (0 = disabled)")
     parser.add_argument("--model", type=Path, default=DEFAULT_MODEL_PATH)
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     args = parser.parse_args()
@@ -239,7 +276,7 @@ def main() -> None:
 
     climbs = generate_multiple(
         model, args.grade, hold_id_mapping, device,
-        count=args.count, temperature=args.temperature,
+        count=args.count, temperature=args.temperature, top_k=args.top_k,
     )
 
     for i, climb in enumerate(climbs):

@@ -129,6 +129,7 @@ class ClimbGenerator(nn.Module):
         grade_idx: int,
         hidden: tuple[torch.Tensor, torch.Tensor] | None = None,
         temperature: float = 1.0,
+        top_k: int = 0,
     ) -> dict:
         """Generate a single next hold (autoregressive step).
 
@@ -140,6 +141,7 @@ class ClimbGenerator(nn.Module):
             grade_idx: Target grade index
             hidden: LSTM hidden state
             temperature: Sampling temperature
+            top_k: If > 0, sample from top-k most likely holds only
 
         Returns:
             Dict with predicted hold, type, color, position, and new hidden state
@@ -157,18 +159,36 @@ class ClimbGenerator(nn.Module):
 
         # Sample next hold
         hold_logits = output["hold_logits"][0, -1] / temperature
-        hold_probs = torch.softmax(hold_logits, dim=-1)
-        next_hold_idx = torch.multinomial(hold_probs, 1).item()
+        if top_k > 0:
+            top_k_vals, top_k_indices = torch.topk(hold_logits, top_k)
+            hold_probs = torch.softmax(top_k_vals, dim=-1)
+            next_hold_idx = top_k_indices[torch.multinomial(hold_probs, 1)].item()
+        else:
+            hold_probs = torch.softmax(hold_logits, dim=-1)
+            next_hold_idx = torch.multinomial(hold_probs, 1).item()
 
         # Sample next hold type
         type_logits = output["hold_type_logits"][0, -1] / temperature
-        type_probs = torch.softmax(type_logits, dim=-1)
-        next_type_idx = torch.multinomial(type_probs, 1).item()
+        if top_k > 0:
+            top_k_vals, top_k_indices = torch.topk(type_logits, min(top_k, len(type_logits)))
+            type_probs = torch.softmax(top_k_vals, dim=-1)
+            next_type_idx = top_k_indices[torch.multinomial(type_probs, 1)].item()
+        else:
+            type_probs = torch.softmax(type_logits, dim=-1)
+            # Add small epsilon to prevent collapse
+            type_probs = type_probs + 1e-6
+            type_probs = type_probs / type_probs.sum()
+            next_type_idx = torch.multinomial(type_probs, 1).item()
 
         # Sample next LED color
         color_logits = output["led_color_logits"][0, -1] / temperature
-        color_probs = torch.softmax(color_logits, dim=-1)
-        next_color_idx = torch.multinomial(color_probs, 1).item()
+        if top_k > 0:
+            top_k_vals, top_k_indices = torch.topk(color_logits, min(top_k, len(color_logits)))
+            color_probs = torch.softmax(top_k_vals, dim=-1)
+            next_color_idx = top_k_indices[torch.multinomial(color_probs, 1)].item()
+        else:
+            color_probs = torch.softmax(color_logits, dim=-1)
+            next_color_idx = torch.multinomial(color_probs, 1).item()
 
         # Predict next position
         next_position = output["position_pred"][0, -1]

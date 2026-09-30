@@ -86,15 +86,15 @@ def test_climb_generator_forward():
 
     hold_indices = torch.randint(0, num_holds, (batch_size, seq_len))
     positions = torch.rand(batch_size, seq_len, 2)
-    hold_type_indices = torch.randint(0, 9, (batch_size, seq_len))
-    led_color_indices = torch.randint(0, 6, (batch_size, seq_len))
+    hold_type_indices = torch.randint(0, 4, (batch_size, seq_len))  # 4 hold types: start, middle, finish, foot
+    led_color_indices = torch.randint(0, 4, (batch_size, seq_len))  # 4 LED colors
     grade_indices = torch.randint(0, 18, (batch_size,))
 
     output = model(hold_indices, positions, hold_type_indices, led_color_indices, grade_indices)
 
     assert output["hold_logits"].shape == (batch_size, seq_len, num_holds)
-    assert output["hold_type_logits"].shape == (batch_size, seq_len, 9)
-    assert output["led_color_logits"].shape == (batch_size, seq_len, 6)
+    assert output["hold_type_logits"].shape == (batch_size, seq_len, 4)
+    assert output["led_color_logits"].shape == (batch_size, seq_len, 4)
     assert output["position_pred"].shape == (batch_size, seq_len, 2)
     assert output["hidden"] is not None
 

@@ -15,34 +15,28 @@ INDEX_TO_GRADE: dict[int, str] = {v: k for k, v in GRADE_TO_INDEX.items()}
 NUM_GRADES = len(GRADE_TO_INDEX)
 
 # ── Hold Types ───────────────────────────────────────────────────────────────
-# Kilter Board hold types as they appear in the database.
+# Kilter Board hold types as they appear in the database (placement_roles.name).
 # These are categorical — we embed them, not one-hot encode.
 
 HOLD_TYPES: list[str] = [
-    "jug",
-    "crimp",
-    "sloper",
-    "pinch",
-    "pocket",
-    "volume",
-    "foothold",
     "start",
+    "middle",
     "finish",
+    "foot",
 ]
 HOLD_TYPE_TO_INDEX: dict[str, int] = {ht: i for i, ht in enumerate(HOLD_TYPES)}
 INDEX_TO_HOLD_TYPE: dict[int, str] = {v: k for k, v in HOLD_TYPE_TO_INDEX.items()}
 NUM_HOLD_TYPES = len(HOLD_TYPES)
 
 # ── LED Colors ───────────────────────────────────────────────────────────────
-# Categorical LED colors used on the Kilter Board.
+# Categorical LED colors used on the Kilter Board (placement_roles.led_color).
+# Stored as hex strings in the database.
 
 LED_COLORS: list[str] = [
-    "red",
-    "green",
-    "blue",
-    "yellow",
-    "purple",
-    "off",
+    "00FF00",  # green (start)
+    "00FFFF",  # cyan (middle)
+    "FF00FF",  # magenta (finish)
+    "FFA500",  # orange (foot)
 ]
 LED_COLOR_TO_INDEX: dict[str, int] = {c: i for i, c in enumerate(LED_COLORS)}
 INDEX_TO_LED_COLOR: dict[int, str] = {v: k for k, v in LED_COLOR_TO_INDEX.items()}

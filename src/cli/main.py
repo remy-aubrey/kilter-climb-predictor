@@ -40,7 +40,6 @@ def generate(
     grade: str = typer.Option(..., "--grade", "-g", help="Target grade (V0-V17)"),
     count: int = typer.Option(3, "--count", "-n", help="Number of climbs to generate"),
     temperature: float = typer.Option(1.0, "--temperature", "-t", help="Sampling temperature"),
-    model: Path = typer.Option(Path("models/climb_generator.pt"), "--model", help="Model checkpoint path"),
     data_dir: Path = typer.Option(Path("data/processed"), "--data-dir", help="Preprocessed data directory"),
 ):
     """Generate new climbs at the specified grade."""
@@ -49,31 +48,21 @@ def generate(
     if count < 1:
         raise typer.BadParameter("Count must be a positive integer")
 
-    from src.model.generate import load_model, generate_multiple
-    import torch
+    from src.model.markov import MarkovClimbGenerator
+    from src.cli.visualize import visualize_climb
 
-    device = torch.device("cpu")
-
-    if not model.exists():
-        console.print(f"[red]Model not found: {model}[/red]")
+    model_path = Path("models/markov_model.json")
+    if not model_path.exists():
+        console.print(f"[red]Model not found: {model_path}[/red]")
         console.print("Train a model first: kilter-gen train")
         raise typer.Exit(1)
 
-    model_obj, hold_id_mapping = load_model(model, data_dir, device)
+    generator = MarkovClimbGenerator()
+    generator.load(model_path)
 
-    climbs = generate_multiple(
-        model_obj, grade, hold_id_mapping, device,
-        count=count, temperature=temperature,
-    )
-
-    for i, climb in enumerate(climbs):
-        console.print(f"\n[bold]Climb {i + 1} ({grade}):[/bold]")
-        for j, hold in enumerate(climb):
-            console.print(
-                f"  {j + 1}. {hold['hold_type']:10s} "
-                f"({hold['x']:5.1f}, {hold['y']:5.1f}) "
-                f"[{hold['led_color']}]"
-            )
+    for i in range(count):
+        climb = generator.generate(grade, temperature=temperature)
+        visualize_climb(climb, grade)
 
 
 @app.command()

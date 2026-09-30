@@ -74,12 +74,16 @@ def get_device() -> torch.device:
     return torch.device("cpu")
 
 
-def compute_loss(output: dict, batch: dict) -> torch.Tensor:
+def compute_loss(
+    output: dict,
+    batch: dict,
+    hold_type_weights: torch.Tensor | None = None,
+) -> torch.Tensor:
     """Compute multi-task loss.
 
     Combines:
         - Cross-entropy for hold ID prediction
-        - Cross-entropy for hold type prediction
+        - Cross-entropy for hold type prediction (with class weights)
         - Cross-entropy for LED color prediction
         - MSE for position regression
     """
@@ -103,6 +107,7 @@ def compute_loss(output: dict, batch: dict) -> torch.Tensor:
     loss_type = nn.functional.cross_entropy(
         hold_type_logits.view(-1, hold_type_logits.size(-1)),
         targets_type.view(-1),
+        weight=hold_type_weights,
         reduction="none",
     )
     loss_color = nn.functional.cross_entropy(
@@ -133,6 +138,7 @@ def train_epoch(
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     max_grad_norm: float,
+    hold_type_weights: torch.Tensor | None = None,
 ) -> float:
     """Train for one epoch."""
     model.train()
@@ -151,7 +157,7 @@ def train_epoch(
             batch["led_color_indices"],
             batch["grade_indices"],
         )
-        loss = compute_loss(output, batch)
+        loss = compute_loss(output, batch, hold_type_weights)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
         optimizer.step()
@@ -166,6 +172,7 @@ def validate(
     model: ClimbGenerator,
     dataloader: DataLoader,
     device: torch.device,
+    hold_type_weights: torch.Tensor | None = None,
 ) -> float:
     """Validate the model."""
     model.eval()
@@ -182,7 +189,7 @@ def validate(
                 batch["led_color_indices"],
                 batch["grade_indices"],
             )
-            loss = compute_loss(output, batch)
+            loss = compute_loss(output, batch, hold_type_weights)
             total_loss += loss.item()
             num_batches += 1
 
@@ -195,6 +202,23 @@ def load_hold_id_mapping(data_dir: Path) -> dict[str, int]:
     with open(mapping_path) as f:
         mapping = json.load(f)
     return mapping
+
+
+def compute_hold_type_weights(dataset: ClimbDataset, num_types: int, device: torch.device) -> torch.Tensor:
+    """Compute class weights for hold type prediction based on frequency.
+
+    Weights are inversely proportional to class frequency.
+    """
+    counts = torch.zeros(num_types)
+    for sample in dataset.samples:
+        for idx in sample["hold_type_indices"]:
+            counts[idx] += 1
+
+    # Inverse frequency weighting
+    weights = 1.0 / counts.clamp(min=1)
+    # Normalize so mean weight is 1.0
+    weights = weights / weights.mean()
+    return weights.to(device)
 
 
 def train(config: TrainConfig) -> Path:
@@ -239,6 +263,11 @@ def train(config: TrainConfig) -> Path:
     num_holds = len(hold_id_mapping)
     console.print(f"  Unique holds: {num_holds}")
 
+    # Compute hold type class weights
+    from src.utils.constants import NUM_HOLD_TYPES
+    hold_type_weights = compute_hold_type_weights(train_dataset, NUM_HOLD_TYPES, device)
+    console.print(f"  Hold type weights: {[f'{w:.2f}' for w in hold_type_weights.tolist()]}")
+
     # Create model
     model = ClimbGenerator(
         num_holds=num_holds,
@@ -282,8 +311,8 @@ def train(config: TrainConfig) -> Path:
         task = progress.add_task("Training", total=config.epochs, loss="—")
 
         for epoch in range(config.epochs):
-            train_loss = train_epoch(model, train_loader, optimizer, device, config.max_grad_norm)
-            val_loss = validate(model, val_loader, device)
+            train_loss = train_epoch(model, train_loader, optimizer, device, config.max_grad_norm, hold_type_weights)
+            val_loss = validate(model, val_loader, device, hold_type_weights)
 
             progress.update(task, advance=1, loss=f"train={train_loss:.4f} val={val_loss:.4f}")
 
