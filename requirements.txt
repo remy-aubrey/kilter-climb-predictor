@@ -1,0 +1,7 @@
+boardlib>=0.1.0
+pandas>=2.0
+numpy>=1.24
+torch>=2.0
+typer>=0.9
+rich>=13.0
+matplotlib>=3.7
