@@ -48,21 +48,54 @@ def generate(
     if count < 1:
         raise typer.BadParameter("Count must be a positive integer")
 
-    from src.model.markov import MarkovClimbGenerator
+    import torch
+    from src.model.gpt import ClimbGPT, generate_valid_climb
     from src.cli.visualize import visualize_climb
 
-    model_path = Path("models/markov_model.json")
+    model_path = Path("models/climb_gpt.pt")
     if not model_path.exists():
         console.print(f"[red]Model not found: {model_path}[/red]")
         console.print("Train a model first: kilter-gen train")
         raise typer.Exit(1)
 
-    generator = MarkovClimbGenerator()
-    generator.load(model_path)
+    # Load model
+    checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+    tok_of = checkpoint["tok_of"]
+    pair_of = {int(k): tuple(v) for k, v in checkpoint["pair_of"].items()}
+    hold_positions = checkpoint["hold_positions"]
+
+    # Create model
+    vocab_size = len(tok_of) + 2 + 18  # +2 for PAD/END, +18 for grades
+    max_len = 32  # Must match training max_len
+    model = ClimbGPT(
+        vocab_size=vocab_size,
+        max_len=max_len,
+        d_model=128,
+        nhead=4,
+        num_layers=4,
+    )
+
+    # Load trained weights
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.eval()
+
+    # Generate climbs
+    from src.utils.constants import GRADE_TO_INDEX
+    grade_idx = GRADE_TO_INDEX[grade]
 
     for i in range(count):
-        climb = generator.generate(grade, temperature=temperature)
-        visualize_climb(climb, grade)
+        climb = generate_valid_climb(
+            model,
+            grade_idx,
+            tok_of,
+            pair_of,
+            hold_positions,
+            temperature=temperature,
+        )
+        if climb:
+            visualize_climb(climb, grade)
+        else:
+            console.print(f"[yellow]Failed to generate climb {i + 1}[/yellow]")
 
 
 @app.command()

@@ -2,85 +2,51 @@
 
 A Python CLI tool that uses machine learning to generate new climbing routes for the Kilter Board. Specify a grade (e.g., V5) and the tool outputs a new climb with hold positions and LED colors.
 
-## How It Works
+## Current Status
 
-1. **Data**: Downloads the Kilter Board climb database (100k+ climbs) via `boardlib`
-2. **Preprocessing**: Parses climb sequences, encodes hold types/positions/grades, splits into train/val/test
-3. **Model**: LSTM-based sequence generator conditioned on grade — learns P(next_hold | sequence_so_far, grade)
-4. **Generation**: Autoregressively samples new climbs, validates reachability constraints
-5. **CLI**: Typer-based CLI with ASCII visualization
+**Working**: GPT-style transformer with rule-based masking generates climbs that start at the bottom, progress upward, and finish on a finish hold. The climbs are too short though and the holds are clustered closely together. Some climbs are missing start holds or have transitions that are too reachy or don't make much sense.
 
-## Installation
+**Trained**: 2 epochs on 50% subset (40k samples). Validation loss: 4.07.
+
+**Next**: Train for more epochs (20-50) on full dataset for better quality.
+
+## Quick Start
 
 ```bash
-# Clone and enter the project
-git clone <repo-url>
-cd kilter-climb-predictor
-
-# Create virtual environment
+# Setup
 python3 -m venv .venv
 source .venv/bin/activate
-
-# Install dependencies
 pip install -e ".[dev]"
-```
 
-## Setup
+# Download data (no username needed)
+boardlib database kilter data/kilter.db
 
-1. Copy `.env.example` to `.env` and fill in your Kilter Board credentials:
-   ```bash
-   cp .env.example .env
-   ```
-
-2. Download the database (no username needed — uses bundled data from the app):
-   ```bash
-   boardlib database kilter data/kilter.db
-   ```
-
-## Usage
-
-### Preprocess the data
-```bash
+# Preprocess
 python -m src.data.preprocess --db data/kilter.db --output data/processed/
-```
 
-### Train the model
-```bash
-# Quick smoke test (2 epochs)
-python -m src.model.train --epochs 2 --batch-size 64
+# Train (GPT-style model)
+python -m src.model.train_gpt --epochs 20 --batch-size 32
 
-# Full training run
-python -m src.model.train --epochs 50 --batch-size 32 --patience 5
-```
-
-### Generate climbs
-```bash
-# Using the CLI
+# Generate climbs
 kilter-gen generate --grade V5 --count 3
-
-# Or directly
-python -m src.model.generate --grade V5 --count 3 --temperature 1.0
 ```
 
-### Visualize a climb
-```bash
-kilter-gen visualize --grade V5
+## How It Works
+
+1. **Data**: Downloads the Kilter Board climb database (100k+ climbs)
+2. **Preprocessing**: Parses climb sequences, encodes hold types/positions/grades
+3. **Model**: GPT-style transformer with causal mask
+4. **Generation**: Autoregressive sampling with rule-based masking
+5. **CLI**: Typer-based CLI with ASCII visualization
+
+## Architecture
+
 ```
-
-### View dataset statistics
-```bash
-kilter-gen stats
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐     ┌──────────┐
+│  Kilter DB  │────▶│  Data Layer  │────▶│  GPT Model  │────▶│   CLI    │
+│  (SQLite)   │     │  (Pandas)    │     │  (PyTorch)  │     │  (Typer) │
+└─────────────┘     └──────────────┘     └─────────────┘     └──────────┘
 ```
-
-## CLI Commands
-
-| Command | Description |
-|---------|-------------|
-| `kilter-gen generate --grade V5 --count 3` | Generate new climbs |
-| `kilter-gen train --epochs 50` | Train the model |
-| `kilter-gen download` | Download the database |
-| `kilter-gen stats` | Show dataset statistics |
-| `kilter-gen visualize --grade V5` | ASCII visualization |
 
 ## Project Structure
 
@@ -92,10 +58,10 @@ kilter-climb-predictor/
 │   │   ├── schema.py        # DB schema exploration
 │   │   └── preprocess.py    # Clean and transform raw data
 │   ├── model/
-│   │   ├── dataset.py       # PyTorch Dataset for climbs
-│   │   ├── network.py       # LSTM model definition
-│   │   ├── train.py         # Training loop
-│   │   └── generate.py      # Inference / generation logic
+│   │   ├── gpt.py           # GPT-style transformer (current)
+│   │   ├── train_gpt.py     # Training script for GPT
+│   │   ├── markov.py        # Markov chain (deprecated)
+│   │   └── transformer.py   # Original transformer (deprecated)
 │   ├── cli/
 │   │   ├── main.py          # Typer CLI app
 │   │   └── visualize.py     # ASCII climb display
@@ -107,24 +73,26 @@ kilter-climb-predictor/
 └── outputs/                  # Generated climbs (gitignored)
 ```
 
-## Reachability Constraints
+## CLI Commands
 
-Generated climbs are validated against user measurements (height: 157cm, wingspan: 157cm):
-
-| Constraint | Value |
-|------------|-------|
-| Max hand-to-hand distance | 140cm |
-| Max foot-to-hand distance | 120cm |
-| Max foot-to-foot distance | 100cm |
-
-These are configurable in `src/utils/constants.py`.
+| Command | Description |
+|---------|-------------|
+| `kilter-gen generate --grade V5 --count 3` | Generate new climbs |
+| `kilter-gen train --epochs 20` | Train the model |
+| `kilter-gen download` | Download the database |
+| `kilter-gen stats` | Show dataset statistics |
+| `kilter-gen visualize --grade V5` | ASCII visualization |
 
 ## Technology
 
 - **Data**: `boardlib` for download, `pandas` for processing
-- **ML**: `PyTorch` with LSTM sequence generator
+- **ML**: `PyTorch` with GPT-style transformer
 - **CLI**: `typer` + `rich` for pretty terminal output
 - **Testing**: `pytest`
+
+## History & Learnings
+
+See [HISTORY.md](HISTORY.md) for detailed history of what worked/didn't work and key learnings.
 
 ## License
 
